@@ -1,0 +1,1 @@
+ALTER TABLE habitaciones ADD COLUMN nombre VARCHAR(100);

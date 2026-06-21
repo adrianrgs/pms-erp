@@ -12,12 +12,33 @@ export async function login(formData: FormData) {
     password: formData.get('password') as string,
   }
 
-  const { error } = await supabase.auth.signInWithPassword(data)
+  try {
+    const { data: authData, error } = await supabase.auth.signInWithPassword(data)
 
-  if (error) {
-    redirect('/auth/login?error=true')
+    if (error) {
+      console.error("Login error:", error)
+      redirect('/auth/login?error=true')
+    }
+
+    // Verificar el rol
+    const { data: perfil, error: perfilError } = await supabase.from('perfiles').select('rol').eq('id', authData.user?.id).single()
+
+    if (perfilError) {
+      console.error("Perfil fetch error:", perfilError)
+    }
+
+    revalidatePath('/', 'layout')
+    
+    if (perfil?.rol === 'erp_admin' || perfil?.rol === 'erp_agent') {
+      redirect('/erp/dashboard')
+    } else {
+      redirect('/pms/dashboard')
+    }
+  } catch (err: any) {
+    console.error("Caught error in login action:", err)
+    if (err?.message === 'NEXT_REDIRECT' || err?.digest?.startsWith('NEXT_REDIRECT')) {
+      throw err
+    }
+    throw err
   }
-
-  revalidatePath('/', 'layout')
-  redirect('/pms/dashboard')
 }

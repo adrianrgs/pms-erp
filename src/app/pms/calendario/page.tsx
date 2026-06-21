@@ -16,25 +16,28 @@ export default async function CalendarioPage() {
 
   const { data: perfil } = await supabase
     .from('perfiles')
-    .select('posada_id')
+    .select('posada_id, posadas(edad_max_infantes, edad_max_ninos)')
     .eq('id', user.id)
     .single()
 
   let habitaciones: any[] = []
   let reservas: any[] = []
   let categorias: any[] = []
+  let servicios: any[] = []
 
   if (perfil?.posada_id) {
-    // Fetch rooms, bookings, and categories
-    const [habsRes, resRes, catsRes] = await Promise.all([
+    // Fetch rooms, bookings, categories and services
+    const [habsRes, resRes, catsRes, servRes] = await Promise.all([
       supabase.from('habitaciones').select('*').eq('posada_id', perfil.posada_id).order('numero_habitacion'),
       supabase.from('reservas').select('*').eq('posada_id', perfil.posada_id),
-      supabase.from('categorias_habitacion').select('*').eq('posada_id', perfil.posada_id)
+      supabase.from('categorias_habitacion').select('*').eq('posada_id', perfil.posada_id),
+      supabase.from('servicios').select('*').eq('posada_id', perfil.posada_id)
     ])
 
     habitaciones = habsRes.data || []
     reservas = resRes.data || []
     categorias = catsRes.data || []
+    servicios = servRes.data || []
   }
 
   return (
@@ -43,6 +46,9 @@ export default async function CalendarioPage() {
         habitaciones={habitaciones} 
         reservas={reservas} 
         categorias={categorias} 
+        serviciosAdicionalesDisponibles={servicios}
+        edadMaxInfantes={(perfil?.posadas as any)?.edad_max_infantes ?? 3}
+        edadMaxNinos={(perfil?.posadas as any)?.edad_max_ninos ?? 12}
       />
     </div>
   )

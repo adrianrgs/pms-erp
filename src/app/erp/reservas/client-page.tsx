@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react'
 import { format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { CalendarDays, Hotel, Users, Search, Info, Trash2, FileText, UploadCloud, Eye, X } from 'lucide-react'
+import { CalendarDays, Hotel, Users, Search, Info, Trash2, FileText, UploadCloud, Eye, X, ArrowUpDown } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -16,6 +16,7 @@ import { cancelReservaB2B, editReservaB2B, uploadComprobante, deleteComprobante 
 export default function ERPReservasListClient({ reservas }: { reservas: any[] }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedRes, setSelectedRes] = useState<any>(null)
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
   
   // Modal state
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -27,7 +28,14 @@ export default function ERPReservasListClient({ reservas }: { reservas: any[] })
   const [editNinos, setEditNinos] = useState(0)
   const [editExpediente, setEditExpediente] = useState('')
 
-  const filteredReservas = reservas.filter(res => {
+  // Default natural order: newest first based on created_at or check_in fallback
+  const sortedReservas = [...reservas].sort((a, b) => {
+    const timeA = new Date(a.created_at || a.check_in).getTime()
+    const timeB = new Date(b.created_at || b.check_in).getTime()
+    return timeB - timeA
+  })
+
+  let processedReservas = sortedReservas.filter(res => {
     if (!searchQuery) return true
     const q = searchQuery.toLowerCase()
     const info = res.cliente_info || {}
@@ -38,6 +46,52 @@ export default function ERPReservasListClient({ reservas }: { reservas: any[] })
     
     return nombre.includes(q) || doc.includes(q) || loc.includes(q) || exp.includes(q)
   })
+
+  if (sortConfig) {
+    processedReservas.sort((a, b) => {
+      let valA: any = ''
+      let valB: any = ''
+
+      switch (sortConfig.key) {
+        case 'huesped':
+          valA = a.cliente_info?.titular?.nombre || a.cliente_info?.nombre || ''
+          valB = b.cliente_info?.titular?.nombre || b.cliente_info?.nombre || ''
+          break
+        case 'posada':
+          valA = (a.posadas as any)?.nombre || ''
+          valB = (b.posadas as any)?.nombre || ''
+          break
+        case 'fechas':
+          valA = new Date(a.check_in).getTime()
+          valB = new Date(b.check_in).getTime()
+          break
+        case 'monto':
+          valA = Number(a.monto_total) || 0
+          valB = Number(b.monto_total) || 0
+          break
+        case 'estado':
+          valA = a.estado
+          valB = b.estado
+          break
+      }
+
+      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1
+      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1
+      return 0
+    })
+  }
+
+  const handleSort = (key: string) => {
+    if (sortConfig && sortConfig.key === key) {
+      if (sortConfig.direction === 'asc') {
+        setSortConfig({ key, direction: 'desc' })
+      } else {
+        setSortConfig(null) // Return to natural order
+      }
+    } else {
+      setSortConfig({ key, direction: 'asc' })
+    }
+  }
 
   const openDetails = (res: any) => {
     setSelectedRes(res)
@@ -143,22 +197,32 @@ export default function ERPReservasListClient({ reservas }: { reservas: any[] })
           <Table>
             <TableHeader>
               <TableRow className="bg-teal-50/50 dark:bg-teal-900/20">
-                <TableHead>Huésped Titular</TableHead>
-                <TableHead>Posada y Habitación</TableHead>
-                <TableHead>Fechas y File</TableHead>
-                <TableHead>Neto (Tarifa B2B)</TableHead>
-                <TableHead>Estado</TableHead>
+                <TableHead className="cursor-pointer select-none hover:text-teal-700" onClick={() => handleSort('huesped')}>
+                  <div className="flex items-center gap-1">Huésped Titular <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
+                <TableHead className="cursor-pointer select-none hover:text-teal-700" onClick={() => handleSort('posada')}>
+                  <div className="flex items-center gap-1">Posada y Habitación <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
+                <TableHead className="cursor-pointer select-none hover:text-teal-700" onClick={() => handleSort('fechas')}>
+                  <div className="flex items-center gap-1">Fechas y File <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
+                <TableHead className="cursor-pointer select-none hover:text-teal-700" onClick={() => handleSort('monto')}>
+                  <div className="flex items-center gap-1">Neto (Tarifa B2B) <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
+                <TableHead className="cursor-pointer select-none hover:text-teal-700" onClick={() => handleSort('estado')}>
+                  <div className="flex items-center gap-1">Estado <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {!filteredReservas || filteredReservas.length === 0 ? (
+              {!processedReservas || processedReservas.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="h-24 text-center text-zinc-500">
                     {searchQuery ? 'No se encontraron resultados.' : 'Aún no has generado reservas.'}
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredReservas.map((res: any) => {
+                processedReservas.map((res: any) => {
                   const info = res.cliente_info || {}
                   const huesped = info.titular?.nombre || info.nombre || 'Desconocido'
                   const posadaNombre = (res.posadas as any)?.nombre || 'Hotel'
@@ -221,15 +285,17 @@ export default function ERPReservasListClient({ reservas }: { reservas: any[] })
                           </Badge>
                           {res.pago_verificado ? (
                             <span className="text-[10px] text-emerald-600 font-medium flex items-center gap-1 mt-0.5">
-                              Pagado
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg> Pagado
                             </span>
-                          ) : (
-                            res.comprobante_url && (
-                              <span className="text-[10px] text-zinc-500 font-medium flex items-center gap-1 mt-0.5">
-                                Comprobante enviado
-                              </span>
-                            )
-                          )}
+                          ) : res.comprobante_url ? (
+                            <span className="text-[10px] text-blue-600 font-medium flex items-center gap-1 mt-0.5">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Comprobante en revisión
+                            </span>
+                          ) : isActive ? (
+                            <span className="text-[10px] text-orange-700 font-semibold flex items-center gap-1 mt-1 bg-orange-100 px-1.5 py-0.5 rounded border border-orange-200 dark:bg-orange-950/50 dark:border-orange-800 dark:text-orange-400">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg> Falta Comprobante
+                            </span>
+                          ) : null}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -297,6 +363,20 @@ export default function ERPReservasListClient({ reservas }: { reservas: any[] })
                 </div>
 
                 {/* Comprobante de pago section */}
+                {selectedRes?.servicios_adicionales && selectedRes.servicios_adicionales.length > 0 && (
+                  <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                    <Label className="mb-2 block">Servicios Adicionales</Label>
+                    <div className="space-y-1">
+                      {selectedRes.servicios_adicionales.map((s: any, i: number) => (
+                        <div key={i} className="flex justify-between items-center bg-zinc-50 dark:bg-zinc-900 p-2 rounded text-sm">
+                          <span className="text-zinc-700 dark:text-zinc-300">{s.nombre}</span>
+                          <span className="font-semibold text-zinc-900 dark:text-zinc-100">${s.precio}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="pt-2 border-t">
                   <Label className="mb-2 block">Comprobante de Pago</Label>
                   {selectedRes?.comprobante_url && selectedRes?.comprobante_url !== 'uploaded' ? (

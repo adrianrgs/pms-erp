@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { startOfMonth, endOfMonth, eachDayOfInterval, format, isWithinInterval, addMonths, subMonths, parseISO, addDays, startOfDay } from 'date-fns'
+import { startOfMonth, endOfMonth, eachDayOfInterval, format, isWithinInterval, addMonths, subMonths, parseISO, addDays, startOfDay, differenceInDays } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight, Plus, BedDouble, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { toast } from 'sonner'
 import { addReserva, editReserva, deleteReserva, calcularTarifa, deleteReservaGroup } from '../reservas/actions'
 
-export default function CalendarioClientPage({ habitaciones, reservas, categorias }: { habitaciones: any[], reservas: any[], categorias: any[] }) {
+export default function CalendarioClientPage({ habitaciones, reservas, categorias, serviciosAdicionalesDisponibles = [], edadMaxInfantes = 3, edadMaxNinos = 12 }: { habitaciones: any[], reservas: any[], categorias: any[], serviciosAdicionalesDisponibles?: any[], edadMaxInfantes?: number, edadMaxNinos?: number }) {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -24,16 +24,20 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
     check_in: '',
     check_out: '',
     habitacion_ids: [] as string[],
-    detalles_por_habitacion: {} as Record<string, { nombre: string, documento: string, adultos: string, ninos: string, acompanantes: { id: string, nombre: string, documento: string }[] }>,
+    detalles_por_habitacion: {} as Record<string, { nombre: string, documento: string, adultos: string, ninos: string, edadesNinos: number[], acompanantes: { id: string, nombre: string, documento: string }[] }>,
     tarifas_por_habitacion: {} as Record<string, number>,
+    desgloses_por_habitacion: {} as Record<string, { base: number, adultos_extra: number, ninos: number }>,
+    localizador: undefined as string | undefined,
 
     adultos: '2',
     ninos: '0',
+    edadesNinos: [] as number[],
     cliente_nombre: '',
     cliente_email: '',
     cliente_telefono: '',
     cliente_documento: '',
     acompanantes_globales: [] as { id: string, nombre: string, documento: string }[],
+    servicios_seleccionados: [] as any[],
     total: '',
   })
 
@@ -52,16 +56,26 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
             const ad = detail.adultos ? parseInt(detail.adultos) : parseInt(formData.adultos) || 2
             const ni = detail.ninos ? parseInt(detail.ninos) : parseInt(formData.ninos) || 0
 
+            const edades = detail.edadesNinos || formData.edadesNinos || []
+            let ninosEfectivos = 0
+            edades.forEach(edad => {
+              if (edad > edadMaxInfantes && edad <= edadMaxNinos) ninosEfectivos++;
+            })
+            if (edades.length === 0 && ni > 0) {
+              ninosEfectivos = ni;
+            }
+
             return calcularTarifa(
               id, 
               formData.check_in, 
               formData.check_out, 
               ad, 
-              ni
+              ninosEfectivos
             )
           }))
 
           const newTarifas: Record<string, number> = {}
+          const newDesgloses: Record<string, { base: number, adultos_extra: number, ninos: number }> = {}
 
           for (let i = 0; i < results.length; i++) {
             const result = results[i]
@@ -73,14 +87,41 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
             } else if (result && typeof result === 'object' && 'precio' in result) {
               grandTotal += (result.precio as number);
               newTarifas[id] = result.precio as number;
+              newDesgloses[id] = result.desglose as { base: number, adultos_extra: number, ninos: number } || { base: 0, adultos_extra: 0, ninos: 0 };
             }
           }
           
           if (hasError) {
             toast.warning('Aviso de Tarifa', { description: errorMsg })
-            setFormData(prev => ({ ...prev, total: '0', tarifas_por_habitacion: {} }))
+            setFormData(prev => ({ ...prev, total: '0', tarifas_por_habitacion: {}, desgloses_por_habitacion: {} }))
           } else {
-            setFormData(prev => ({ ...prev, total: grandTotal.toString(), tarifas_por_habitacion: newTarifas }))
+            // Calculate days
+            const d1 = new Date(formData.check_in);
+            const d2 = new Date(formData.check_out);
+            const dias = (d1 && d2 && d1 < d2) ? differenceInDays(d2, d1) : 0;
+            
+            // Calculate total persons
+            let totalPersonas = 0;
+            formData.habitacion_ids.forEach(id => {
+              const detail = formData.detalles_por_habitacion[id] || {}
+              const ad = detail.adultos ? parseInt(detail.adultos) : parseInt(formData.adultos) || 2
+              const ni = detail.ninos ? parseInt(detail.ninos) : parseInt(formData.ninos) || 0
+              totalPersonas += (ad + ni);
+            });
+
+            // Add services total
+            const serviciosTotal = formData.servicios_seleccionados.reduce((sum, s) => {
+              const precioBase = Number(s.precio) || 0;
+              if (s.tipo_cobro === 'Por Persona / Por Noche') {
+                return sum + (precioBase * totalPersonas * dias);
+              } else {
+                return sum + precioBase;
+              }
+            }, 0)
+
+            const finalTotal = grandTotal + serviciosTotal
+
+            setFormData(prev => ({ ...prev, total: finalTotal.toString(), tarifas_por_habitacion: newTarifas, desgloses_por_habitacion: newDesgloses }))
           }
         } catch (error) {
           console.error("Error calculating rate", error)
@@ -95,7 +136,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
       const delay = setTimeout(fetchPrice, 500)
       return () => clearTimeout(delay)
     }
-  }, [formData.check_in, formData.check_out, formData.habitacion_ids, formData.adultos, formData.ninos, formData.detalles_por_habitacion, editingId])
+  }, [formData.check_in, formData.check_out, formData.habitacion_ids, formData.adultos, formData.ninos, formData.edadesNinos, formData.detalles_por_habitacion, formData.servicios_seleccionados, editingId])
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -133,6 +174,8 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
     try {
       const formNode = e.currentTarget as HTMLFormElement
       const data = new FormData(formNode)
+      data.append('servicios_adicionales', JSON.stringify(formData.servicios_seleccionados))
+
       if (editingId) {
         await editReserva(editingId, data)
         toast.success('Reserva actualizada')
@@ -188,13 +231,18 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
       check_out: format(addDays(date, 1), 'yyyy-MM-dd'),
       habitacion_ids: [habitacionId],
       detalles_por_habitacion: {},
+      tarifas_por_habitacion: {},
+      desgloses_por_habitacion: {},
+      localizador: undefined,
       adultos: '2',
       ninos: '0',
+      edadesNinos: [],
       cliente_nombre: '',
       cliente_email: '',
       cliente_telefono: '',
       cliente_documento: '',
       acompanantes_globales: [],
+      servicios_seleccionados: [],
       total: ''
     })
     setOpen(true)
@@ -209,14 +257,20 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
       check_out: booking.check_out,
       habitacion_ids: [booking.habitacion_id],
       detalles_por_habitacion: {},
+      tarifas_por_habitacion: {
+        [booking.habitacion_id]: booking.monto_total || 0
+      },
+      desgloses_por_habitacion: {},
       localizador: booking.localizador,
       adultos: booking.adultos?.toString() || '2',
       ninos: booking.ninos?.toString() || '0',
+      edadesNinos: [], // No guardamos edades en BD aún para calendario, asumiremos cálculo por conteo
       cliente_nombre: clienteInfo.titular?.nombre || clienteInfo.nombre || '',
       cliente_email: clienteInfo.titular?.email || clienteInfo.email || '',
       cliente_telefono: clienteInfo.titular?.telefono || clienteInfo.telefono || '',
       cliente_documento: clienteInfo.titular?.documento || clienteInfo.documento || '',
-      acompanantes_globales: clienteInfo.acompanantes || [],
+      acompanantes_globales: (clienteInfo.acompanantes || []).map((ac: any, i: number) => ({ ...ac, id: ac.id || `db-ac-${i}-${Date.now()}` })),
+      servicios_seleccionados: booking.servicios_adicionales || [],
       total: booking.monto_total?.toString() || '0'
     })
     setOpen(true)
@@ -247,8 +301,8 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
               onClick={() => {
                 setEditingId(null)
                 setFormData({
-                  check_in: '', check_out: '', habitacion_ids: [], detalles_por_habitacion: {}, tarifas_por_habitacion: {}, adultos: '2', ninos: '0',
-                  cliente_nombre: '', cliente_email: '', cliente_telefono: '', cliente_documento: '', acompanantes_globales: [], total: '0'
+                  check_in: '', check_out: '', habitacion_ids: [], detalles_por_habitacion: {}, tarifas_por_habitacion: {}, desgloses_por_habitacion: {}, localizador: undefined, adultos: '2', ninos: '0', edadesNinos: [],
+                  cliente_nombre: '', cliente_email: '', cliente_telefono: '', cliente_documento: '', acompanantes_globales: [], servicios_seleccionados: [], total: '0'
                 })
               }}
             >
@@ -266,11 +320,11 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
               <div className="grid gap-4 py-4 max-h-[60vh] overflow-y-auto px-1">
                   <div className="grid gap-2">
                     <Label htmlFor="cliente_nombre">Huésped Titular Principal</Label>
-                    <Input id="cliente_nombre" name="cliente_nombre" value={formData.cliente_nombre} onChange={e => handleInputChange('cliente_nombre', e.target.value)} required />
+                    <Input id="cliente_nombre" name="cliente_nombre" value={formData.cliente_nombre || ''} onChange={e => handleInputChange('cliente_nombre', e.target.value)} required />
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="cliente_documento">Documento de Identidad (Opcional)</Label>
-                    <Input id="cliente_documento" name="cliente_documento" value={formData.cliente_documento} onChange={e => handleInputChange('cliente_documento', e.target.value)} />
+                    <Input id="cliente_documento" name="cliente_documento" value={formData.cliente_documento || ''} onChange={e => handleInputChange('cliente_documento', e.target.value)} />
                   </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
@@ -280,7 +334,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                       name="check_in" 
                       type="date" 
                       min={format(new Date(), 'yyyy-MM-dd')}
-                      value={formData.check_in} 
+                      value={formData.check_in || ''} 
                       onChange={e => {
                         const val = e.target.value
                         if(!val) {
@@ -304,7 +358,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                         const [y, m, d] = formData.check_in.split('-').map(Number)
                         return format(addDays(new Date(y, m - 1, d), 1), 'yyyy-MM-dd')
                       })() : format(new Date(), 'yyyy-MM-dd')}
-                      value={formData.check_out} 
+                      value={formData.check_out || ''} 
                       onChange={e => handleInputChange('check_out', e.target.value)} 
                       required 
                     />
@@ -312,11 +366,23 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                 </div>
 
                 <div className="grid gap-2">
-                  <div className="flex items-center justify-between mt-4 mb-2 p-3 bg-teal-50 dark:bg-teal-900/20 rounded-lg border border-teal-100 dark:border-teal-800/50">
-                    <span className="font-semibold text-teal-800 dark:text-teal-300">Total de la Reserva</span>
-                    <span className="text-xl font-bold text-teal-600 dark:text-teal-400">
-                      ${formData.total || '0'} {calculating && <span className="text-sm font-normal opacity-70 ml-2">(Calculando...)</span>}
-                    </span>
+                  <div className="bg-teal-50 dark:bg-teal-900/20 p-4 rounded-xl border border-teal-100 dark:border-teal-800/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-teal-800 dark:text-teal-300">Total de la Reserva</span>
+                      <span className="text-3xl font-bold text-teal-900 dark:text-teal-100 tracking-tight">
+                        ${formData.total || '0'} {calculating && <span className="text-sm font-normal opacity-70 ml-2">(Calculando...)</span>}
+                      </span>
+                      {Object.keys(formData.desgloses_por_habitacion || {}).length > 0 && (
+                        <div className="mt-2 flex gap-3 text-xs text-teal-700 dark:text-teal-400">
+                          <span>Base: ${Object.values(formData.desgloses_por_habitacion || {}).reduce((a, b) => a + (b.base || 0), 0)}</span>
+                          <span>Extras: ${Object.values(formData.desgloses_por_habitacion || {}).reduce((a, b) => a + (b.adultos_extra || 0), 0)}</span>
+                          <span>Niños: ${Object.values(formData.desgloses_por_habitacion || {}).reduce((a, b) => a + (b.ninos || 0), 0)}</span>
+                        </div>
+                      )}
+                    </div>
+                    <Button type="submit" disabled={loading || calculating} className="bg-teal-600 hover:bg-teal-700 text-white w-full sm:w-auto shadow-sm">
+                      {loading ? 'Guardando...' : (editingId ? 'Guardar Cambios' : 'Confirmar Reserva')}
+                    </Button>
                   </div>
                   <input type="hidden" name="total" value={formData.total} />
                   <input type="hidden" name="tarifas_por_habitacion" value={JSON.stringify(formData.tarifas_por_habitacion)} />
@@ -371,7 +437,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                       <input type="hidden" name="detalles_por_habitacion" value={JSON.stringify(formData.detalles_por_habitacion)} />
                       {formData.habitacion_ids.map((id, index) => {
                         const hab = habitaciones.find(h => h.id === id)
-                        const detail = formData.detalles_por_habitacion[id] || { nombre: '', documento: '', adultos: '', ninos: '', acompanantes: [] }
+                        const detail = formData.detalles_por_habitacion[id] || { nombre: '', documento: '', adultos: '', ninos: '', edadesNinos: [], acompanantes: [] }
                         
                         return (
                           <div key={id} className="grid grid-cols-12 gap-2 items-start p-3 rounded bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 relative">
@@ -380,7 +446,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                               <div className="flex-1 flex gap-2">
                                 <Input 
                                   placeholder={index === 0 ? formData.cliente_nombre || 'Nombre del Titular' : `Nombre Titular Hab. ${hab?.numero_habitacion} (Opcional)`} 
-                                  value={index === 0 && !detail.nombre ? formData.cliente_nombre : (detail.nombre || '')}
+                                  value={index === 0 && !detail.nombre ? (formData.cliente_nombre || '') : (detail.nombre || '')}
                                   onChange={e => setFormData(prev => ({ 
                                     ...prev, 
                                     detalles_por_habitacion: { 
@@ -392,7 +458,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                                 />
                                 <Input 
                                   placeholder={index === 0 ? formData.cliente_documento || 'Cédula/Doc' : 'Cédula/Doc (Opcional)'} 
-                                  value={index === 0 && !detail.documento ? formData.cliente_documento : (detail.documento || '')}
+                                  value={index === 0 && !detail.documento ? (formData.cliente_documento || '') : (detail.documento || '')}
                                   onChange={e => setFormData(prev => ({ 
                                     ...prev, 
                                     detalles_por_habitacion: { 
@@ -426,13 +492,24 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                               <span className="text-xs text-zinc-500 w-10 text-right">Niños:</span>
                               <Select 
                                 value={detail.ninos || formData.ninos} 
-                                onValueChange={v => setFormData(prev => ({ 
-                                  ...prev, 
-                                  detalles_por_habitacion: { 
-                                    ...prev.detalles_por_habitacion, 
-                                    [id]: { ...detail, ninos: v } 
-                                  } 
-                                }))}
+                                onValueChange={v => {
+                                  const qty = parseInt(v) || 0;
+                                  const currentEdades = detail.edadesNinos || formData.edadesNinos || [];
+                                  let newEdades = [...currentEdades];
+                                  if (qty > currentEdades.length) {
+                                    newEdades = [...currentEdades, ...Array(qty - currentEdades.length).fill(10)];
+                                  } else {
+                                    newEdades = currentEdades.slice(0, qty);
+                                  }
+                                  
+                                  setFormData(prev => ({ 
+                                    ...prev, 
+                                    detalles_por_habitacion: { 
+                                      ...prev.detalles_por_habitacion, 
+                                      [id]: { ...detail, ninos: v, edadesNinos: newEdades } 
+                                    } 
+                                  }))
+                                }}
                               >
                                 <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
                                 <SelectContent>
@@ -440,6 +517,49 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                                 </SelectContent>
                               </Select>
                             </div>
+                            
+                            {/* Selector de Edades de Niños Individual */}
+                            {detail.edadesNinos && detail.edadesNinos.length > 0 && (
+                              <div className="col-span-12 flex flex-wrap gap-2 items-center bg-zinc-50 dark:bg-zinc-900/50 p-2 mt-1 rounded border border-zinc-100 dark:border-zinc-800">
+                                <span className="text-xs text-zinc-500 w-full mb-1">Edades de los niños:</span>
+                                {detail.edadesNinos.map((edad, idx) => (
+                                  <div key={idx} className="flex flex-col gap-1 w-16">
+                                    <Label className="text-[10px] text-zinc-400">Niño {idx + 1}</Label>
+                                    <Input 
+                                      type="number" min="0" max={edadMaxNinos} 
+                                      value={edad}
+                                      onChange={e => {
+                                        const val = parseInt(e.target.value) || 0;
+                                        const clampedVal = Math.min(Math.max(val, 0), edadMaxNinos);
+                                        const newEdades = [...detail.edadesNinos];
+                                        newEdades[idx] = clampedVal;
+                                        setFormData(prev => ({
+                                          ...prev,
+                                          detalles_por_habitacion: {
+                                            ...prev.detalles_por_habitacion,
+                                            [id]: { ...detail, edadesNinos: newEdades }
+                                          }
+                                        }))
+                                      }}
+                                      onBlur={e => {
+                                        const val = parseInt(e.target.value) || 0;
+                                        const clampedVal = Math.min(Math.max(val, 0), edadMaxNinos);
+                                        const newEdades = [...detail.edadesNinos];
+                                        newEdades[idx] = clampedVal;
+                                        setFormData(prev => ({
+                                          ...prev,
+                                          detalles_por_habitacion: {
+                                            ...prev.detalles_por_habitacion,
+                                            [id]: { ...detail, edadesNinos: newEdades }
+                                          }
+                                        }))
+                                      }}
+                                      className="h-6 text-xs p-1 text-center"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                             <div className="col-span-12 sm:col-span-2 flex justify-end">
                               <span className="text-xs font-semibold text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/20 px-2 py-1 rounded">
                                 ${formData.tarifas_por_habitacion[id] || 0}
@@ -460,7 +580,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                                       ...prev,
                                       detalles_por_habitacion: {
                                         ...prev.detalles_por_habitacion,
-                                        [id]: { ...detail, acompanantes: [...acs, { id: Date.now().toString(), nombre: '', documento: '' }] }
+                                        [id]: { ...detail, acompanantes: [...acs, { id: crypto.randomUUID(), nombre: '', documento: '' }] }
                                       }
                                     }))
                                   }}
@@ -475,7 +595,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                                     <div key={ac.id} className="flex gap-2 items-center bg-zinc-50 dark:bg-zinc-900/50 p-1.5 rounded border border-zinc-100 dark:border-zinc-800">
                                       <Input 
                                         placeholder="Nombre" 
-                                        value={ac.nombre} 
+                                        value={ac.nombre || ''} 
                                         onChange={e => {
                                           const acs = detail.acompanantes.map(x => x.id === ac.id ? { ...x, nombre: e.target.value } : x);
                                           setFormData(prev => ({ ...prev, detalles_por_habitacion: { ...prev.detalles_por_habitacion, [id]: { ...detail, acompanantes: acs } } }))
@@ -484,7 +604,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                                       />
                                       <Input 
                                         placeholder="Documento" 
-                                        value={ac.documento} 
+                                        value={ac.documento || ''} 
                                         onChange={e => {
                                           const acs = detail.acompanantes.map(x => x.id === ac.id ? { ...x, documento: e.target.value } : x);
                                           setFormData(prev => ({ ...prev, detalles_por_habitacion: { ...prev.detalles_por_habitacion, [id]: { ...detail, acompanantes: acs } } }))
@@ -514,13 +634,62 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                     <div className="grid grid-cols-2 gap-4">
                       <div className="grid gap-2">
                         <Label htmlFor="adultos">Adultos</Label>
-                        <Input id="adultos" name="adultos" type="number" min="1" value={formData.adultos} onChange={e => handleInputChange('adultos', e.target.value)} required />
+                        <Input id="adultos" name="adultos" type="number" min="1" value={formData.adultos || ''} onChange={e => handleInputChange('adultos', e.target.value)} required />
                       </div>
                       <div className="grid gap-2">
                         <Label htmlFor="ninos">Niños</Label>
-                        <Input id="ninos" name="ninos" type="number" min="0" value={formData.ninos} onChange={e => handleInputChange('ninos', e.target.value)} required />
+                        <Input 
+                          id="ninos" name="ninos" type="number" min="0" 
+                          value={formData.ninos || ''} 
+                          onChange={e => {
+                            const val = e.target.value
+                            const qty = parseInt(val) || 0
+                            const currentEdades = formData.edadesNinos || []
+                            let newEdades = [...currentEdades]
+                            if (qty > currentEdades.length) {
+                              newEdades = [...currentEdades, ...Array(qty - currentEdades.length).fill(10)]
+                            } else {
+                              newEdades = currentEdades.slice(0, qty)
+                            }
+                            setFormData(prev => ({ ...prev, ninos: val, edadesNinos: newEdades }))
+                          }} 
+                          required 
+                        />
                       </div>
                     </div>
+
+                    {/* Selector de edades global */}
+                    {formData.edadesNinos.length > 0 && (
+                      <div className="p-3 bg-zinc-50 dark:bg-zinc-900/50 rounded-md border border-zinc-100 dark:border-zinc-800">
+                        <Label className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 block mb-2">Edades de los Niños</Label>
+                        <div className="flex flex-wrap gap-3">
+                          {formData.edadesNinos.map((edad, idx) => (
+                            <div key={idx} className="flex flex-col gap-1 w-20">
+                              <Label className="text-xs text-zinc-500">Niño {idx + 1}</Label>
+                              <Input 
+                                type="number" min="0" max="17" 
+                                value={edad}
+                                onChange={e => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  const clampedVal = Math.min(Math.max(val, 0), edadMaxNinos);
+                                  const newEdades = [...formData.edadesNinos];
+                                  newEdades[idx] = clampedVal;
+                                  setFormData(prev => ({ ...prev, edadesNinos: newEdades }));
+                                }}
+                                onBlur={e => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  const clampedVal = Math.min(Math.max(val, 0), edadMaxNinos);
+                                  const newEdades = [...formData.edadesNinos];
+                                  newEdades[idx] = clampedVal;
+                                  setFormData(prev => ({ ...prev, edadesNinos: newEdades }));
+                                }}
+                                className="h-8"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     
                     {/* Acompañantes globales para una sola habitación */}
                     <div className="space-y-2 p-3 bg-zinc-50 dark:bg-zinc-900/50 rounded-md border border-zinc-100 dark:border-zinc-800">
@@ -532,7 +701,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                           size="sm" 
                           onClick={() => setFormData(prev => ({
                             ...prev, 
-                            acompanantes_globales: [...prev.acompanantes_globales, { id: Date.now().toString(), nombre: '', documento: '' }]
+                            acompanantes_globales: [...prev.acompanantes_globales, { id: crypto.randomUUID(), nombre: '', documento: '' }]
                           }))}
                           className="h-6 px-2 text-xs text-indigo-600"
                         >
@@ -549,7 +718,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                             <div key={ac.id} className="flex gap-2 items-center bg-white dark:bg-zinc-950 p-2 rounded border border-zinc-200 dark:border-zinc-800">
                               <Input 
                                 placeholder="Nombre completo" 
-                                value={ac.nombre} 
+                                value={ac.nombre || ''} 
                                 onChange={e => {
                                   const acs = formData.acompanantes_globales.map(x => x.id === ac.id ? { ...x, nombre: e.target.value } : x);
                                   setFormData(prev => ({ ...prev, acompanantes_globales: acs }))
@@ -559,7 +728,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                               />
                               <Input 
                                 placeholder="Documento (Opcional)" 
-                                value={ac.documento} 
+                                value={ac.documento || ''} 
                                 onChange={e => {
                                   const acs = formData.acompanantes_globales.map(x => x.id === ac.id ? { ...x, documento: e.target.value } : x);
                                   setFormData(prev => ({ ...prev, acompanantes_globales: acs }))
@@ -579,14 +748,59 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                     </div>
                   </>
                 )}
-                <div className="grid grid-cols-2 gap-4">
+                
+                {serviciosAdicionalesDisponibles.filter(s => s.estado === 'activo' || !s.estado).length > 0 && (
+                  <div className="space-y-2 mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+                    <Label>Servicios Adicionales</Label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {serviciosAdicionalesDisponibles.filter(s => s.estado === 'activo' || !s.estado).map(servicio => {
+                        const isSelected = formData.servicios_seleccionados.some(s => s.id === servicio.id)
+                        return (
+                          <div 
+                            key={servicio.id}
+                            onClick={() => {
+                              if (isSelected) {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  servicios_seleccionados: prev.servicios_seleccionados.filter(s => s.id !== servicio.id)
+                                }))
+                              } else {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  servicios_seleccionados: [...prev.servicios_seleccionados, servicio]
+                                }))
+                              }
+                            }}
+                            className={`flex items-center justify-between p-2 rounded border cursor-pointer transition-colors ${
+                              isSelected 
+                                ? 'bg-indigo-50 border-indigo-200 dark:bg-indigo-900/30 dark:border-indigo-800' 
+                                : 'bg-white border-zinc-200 hover:border-indigo-200 dark:bg-zinc-950 dark:border-zinc-800 dark:hover:border-indigo-800'
+                            }`}
+                          >
+                            <div className="flex flex-col">
+                              <span className={`text-sm font-medium ${isSelected ? 'text-indigo-700 dark:text-indigo-300' : 'text-zinc-700 dark:text-zinc-300'}`}>
+                                {servicio.nombre}
+                              </span>
+                              <span className="text-xs text-zinc-500">${servicio.precio} - {servicio.tipo_cobro || 'Tarifa Fija'}</span>
+                            </div>
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-zinc-300 dark:border-zinc-700'}`}>
+                              {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
                   <div className="grid gap-2">
                     <Label htmlFor="cliente_email">Email (opcional)</Label>
-                    <Input id="cliente_email" name="cliente_email" type="email" value={formData.cliente_email} onChange={e => handleInputChange('cliente_email', e.target.value)} />
+                    <Input id="cliente_email" name="cliente_email" type="email" value={formData.cliente_email || ''} onChange={e => handleInputChange('cliente_email', e.target.value)} />
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="cliente_telefono">Teléfono (opcional)</Label>
-                    <Input id="cliente_telefono" name="cliente_telefono" type="tel" value={formData.cliente_telefono} onChange={e => handleInputChange('cliente_telefono', e.target.value)} />
+                    <Input id="cliente_telefono" name="cliente_telefono" type="tel" value={formData.cliente_telefono || ''} onChange={e => handleInputChange('cliente_telefono', e.target.value)} />
                   </div>
                 </div>
                 <div className="grid gap-2">
@@ -594,7 +808,7 @@ export default function CalendarioClientPage({ habitaciones, reservas, categoria
                     Tarifa Total (USD) 
                     {calculating && <span className="text-[10px] text-indigo-500 font-normal animate-pulse">(Calculando...)</span>}
                   </Label>
-                  <Input id="total" name="total" type="number" step="0.01" value={formData.total} onChange={e => handleInputChange('total', e.target.value)} required />
+                  <Input id="total" name="total" type="number" step="0.01" value={formData.total || ''} onChange={e => handleInputChange('total', e.target.value)} required />
                 </div>
               </div>
               <DialogFooter className="flex items-center justify-between sm:justify-between w-full mt-4">

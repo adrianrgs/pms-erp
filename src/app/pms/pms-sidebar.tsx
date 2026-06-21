@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Building2, CalendarDays, KeyRound, LayoutDashboard, Settings, BedDouble, FileText, DollarSign, Menu } from "lucide-react"
+import { Building2, CalendarDays, KeyRound, LayoutDashboard, Settings, BedDouble, FileText, DollarSign, Menu, Plus, Globe } from "lucide-react"
 import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { Button } from '@/components/ui/button'
 
@@ -11,9 +11,10 @@ const navItems = [
   { name: "Dashboard", href: "/pms/dashboard", icon: LayoutDashboard },
   { name: "Calendario", href: "/pms/calendario", icon: CalendarDays },
   { name: "Reservas", href: "/pms/reservas", icon: FileText },
-  { name: "Habitaciones", href: "/pms/habitaciones", icon: BedDouble },
-  { name: "Categorías", href: "/pms/categorias", icon: KeyRound },
-  { name: "Tarifas", href: "/pms/tarifas", icon: DollarSign },
+  { name: "Cotizaciones", href: "/pms/cotizaciones", icon: FileText },
+  { name: "Inventario y Tarifas", href: "/pms/habitaciones", icon: BedDouble },
+  { name: "Servicios", href: "/pms/servicios", icon: Plus },
+  { name: "Landing Page", href: "/pms/landing", icon: Globe },
   { name: "Configuración", href: "/pms/configuracion", icon: Settings },
 ]
 
@@ -44,9 +45,11 @@ function NavLinks({ onClick }: { onClick?: () => void }) {
   )
 }
 
+import { ThemeToggle } from '@/components/theme-toggle'
+
 function UserProfile() {
   return (
-    <div className="rounded-xl bg-zinc-50 p-4 border border-zinc-100 dark:bg-zinc-800/50 dark:border-zinc-800">
+    <div className="flex items-center justify-between rounded-xl bg-zinc-50 p-3 border border-zinc-100 dark:bg-zinc-800/50 dark:border-zinc-800">
       <div className="flex items-center gap-3">
         <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold dark:bg-indigo-900/50 dark:text-indigo-400">
           A
@@ -56,6 +59,7 @@ function UserProfile() {
           <p className="text-xs text-zinc-500 dark:text-zinc-400">Posada El Faro</p>
         </div>
       </div>
+      <ThemeToggle />
     </div>
   )
 }

@@ -51,14 +51,23 @@ export async function saveTarifa(temporada_id: string, categoria_id: string, for
   const tarifa_base = parseFloat(formData.get('tarifa_base') as string) || 0
   const tarifa_adulto_extra = parseFloat(formData.get('tarifa_adulto_extra') as string) || 0
   const tarifa_nino = parseFloat(formData.get('tarifa_nino') as string) || 0
+  
+  const modalidad_tarifa = formData.get('modalidad_tarifa') as string || 'por_habitacion'
+  const plan_alimentacion = formData.get('plan_alimentacion') as string || 'RO'
+  const comisionable = formData.get('comisionable') === 'true' || formData.get('comisionable') === 'on'
+  const porcentaje_comision = parseFloat(formData.get('porcentaje_comision') as string) || 0
 
   // Upsert using the unique constraint (temporada_id, categoria_id)
   const { error } = await supabase.from('tarifas_por_temporada').upsert({
     temporada_id,
     categoria_id,
     tarifa_base,
-    tarifa_adulto_extra,
-    tarifa_nino
+    tarifa_adulto_extra: modalidad_tarifa === 'por_persona' ? 0 : tarifa_adulto_extra,
+    tarifa_nino,
+    modalidad_tarifa,
+    plan_alimentacion,
+    comisionable,
+    porcentaje_comision
   }, { onConflict: 'temporada_id, categoria_id' })
 
   if (error) throw new Error(error.message)

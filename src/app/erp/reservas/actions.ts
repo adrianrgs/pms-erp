@@ -85,20 +85,17 @@ export async function editReservaB2B(id: string, formData: FormData) {
       .single()
 
     if (hab) {
-      const capacidad_base = (hab.categorias_habitacion as any)?.capacidad_base_pax || 2
-      const adultos_extra = Math.max(0, nuevosAdultos - capacidad_base)
-
-      const { data: precio, error: rpcError } = await supabase.rpc('calcular_precio_estadia', {
+      const { data: result, error: rpcError } = await supabase.rpc('calcular_precio_estadia', {
         p_posada_id: reserva.posada_id,
         p_categoria_id: hab.categoria_id,
         p_check_in: reserva.check_in,
         p_check_out: reserva.check_out,
-        p_adultos_extra: adultos_extra,
+        p_adultos: nuevosAdultos,
         p_ninos: nuevosNinos
       })
 
-      if (!rpcError && precio !== null) {
-        nuevoMonto = precio
+      if (!rpcError && result !== null) {
+        nuevoMonto = result.total
       }
     }
   }

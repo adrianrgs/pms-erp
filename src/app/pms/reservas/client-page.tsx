@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { CalendarDays, Hotel, Users, Pencil, Plus, Trash2, Search, CheckCircle2, FileText } from 'lucide-react'
+import { CalendarDays, Hotel, Users, Pencil, Plus, Trash2, Search, CheckCircle2, FileText, Download, ArrowUpDown } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -21,6 +21,7 @@ export default function ReservasListClientPage({ reservas, habitaciones }: { res
   const [selectedGroup, setSelectedGroup] = useState<any[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
 
   // Edit State
   const [titular, setTitular] = useState<any>({})
@@ -34,11 +35,15 @@ export default function ReservasListClientPage({ reservas, habitaciones }: { res
     groups[key].push(res)
   })
 
-  // Sort groups by check-in date descending
-  const sortedGroups = Object.values(groups).sort((a, b) => new Date(b[0].check_in).getTime() - new Date(a[0].check_in).getTime())
+  // Sort groups by created_at descending (natural order)
+  const sortedGroups = Object.values(groups).sort((a, b) => {
+    const timeA = new Date(a[0].created_at || a[0].check_in).getTime()
+    const timeB = new Date(b[0].created_at || b[0].check_in).getTime()
+    return timeB - timeA
+  })
 
   // Filter groups based on search
-  const filteredGroups = sortedGroups.filter(group => {
+  let processedGroups = sortedGroups.filter(group => {
     if (!searchQuery) return true
     const q = searchQuery.toLowerCase()
     const res = group[0]
@@ -50,6 +55,58 @@ export default function ReservasListClientPage({ reservas, habitaciones }: { res
     
     return nombre.includes(q) || doc.includes(q) || loc.includes(q) || exp.includes(q)
   })
+
+  if (sortConfig) {
+    processedGroups.sort((a, b) => {
+      const resA = a[0]
+      const resB = b[0]
+      let valA: any = ''
+      let valB: any = ''
+
+      switch (sortConfig.key) {
+        case 'huesped':
+          valA = resA.cliente_info?.titular?.nombre || resA.cliente_info?.nombre || ''
+          valB = resB.cliente_info?.titular?.nombre || resB.cliente_info?.nombre || ''
+          break
+        case 'estadia':
+          valA = a.length
+          valB = b.length
+          break
+        case 'fechas':
+          valA = new Date(resA.check_in).getTime()
+          valB = new Date(resB.check_in).getTime()
+          break
+        case 'origen':
+          valA = resA.origen
+          valB = resB.origen
+          break
+        case 'monto':
+          valA = a.reduce((sum, r) => sum + (Number(r.monto_total) || 0), 0)
+          valB = b.reduce((sum, r) => sum + (Number(r.monto_total) || 0), 0)
+          break
+        case 'estado':
+          valA = resA.estado
+          valB = resB.estado
+          break
+      }
+
+      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1
+      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1
+      return 0
+    })
+  }
+
+  const handleSort = (key: string) => {
+    if (sortConfig && sortConfig.key === key) {
+      if (sortConfig.direction === 'asc') {
+        setSortConfig({ key, direction: 'desc' })
+      } else {
+        setSortConfig(null) // Return to natural order
+      }
+    } else {
+      setSortConfig({ key, direction: 'asc' })
+    }
+  }
 
   const handleRowClick = (group: any[]) => {
     setSelectedGroup(group)
@@ -126,6 +183,23 @@ export default function ReservasListClientPage({ reservas, habitaciones }: { res
       setOpen(false) // Close modal so it refreshes data naturally or user can see it updated in list
     } catch (error: any) {
       toast.error('Error al verificar: ' + error.message, { id: 'verify' })
+    }
+  }
+
+  const handleGenerateVoucher = async () => {
+    if (!selectedGroup || selectedGroup.length === 0) return
+
+    setLoading(true)
+    try {
+      // Usar la utilidad de impresión nativa en lugar de html2pdf
+      const { printElement } = await import('@/lib/utils/print')
+      printElement('voucher-template', `Voucher_${selectedGroup[0].localizador}`)
+      toast.success('Abriendo diálogo de impresión del Voucher')
+    } catch (error) {
+      console.error(error)
+      toast.error('Error al generar el Voucher')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -298,6 +372,20 @@ export default function ReservasListClientPage({ reservas, habitaciones }: { res
                     })}
                   </div>
                 </div>
+
+                {selectedGroup?.[0]?.servicios_adicionales && selectedGroup[0].servicios_adicionales.length > 0 && (
+                  <div className="border-b border-indigo-100 dark:border-indigo-800/50 pb-2">
+                    <h4 className="font-semibold text-indigo-800 dark:text-indigo-300 mb-2">Servicios Adicionales</h4>
+                    <div className="space-y-1">
+                      {selectedGroup[0].servicios_adicionales.map((s: any, idx: number) => (
+                        <div key={idx} className="flex justify-between items-center text-indigo-700 dark:text-indigo-300 text-xs bg-white/50 dark:bg-zinc-950/30 p-2 rounded">
+                          <span>{s.nombre}</span>
+                          <span className="font-semibold">${s.precio}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between text-indigo-800 dark:text-indigo-300">
                   <span>Fechas:</span>
                   <span className="font-medium">
@@ -313,37 +401,57 @@ export default function ReservasListClientPage({ reservas, habitaciones }: { res
                 </div>
               </div>
             </div>
-            <DialogFooter className="mt-4">
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cerrar</Button>
-              <Button type="submit" disabled={loading}>{loading ? 'Guardando...' : 'Guardar Pasajeros'}</Button>
+            <DialogFooter className="mt-4 flex sm:justify-between items-center w-full">
+              <Button type="button" variant="secondary" onClick={handleGenerateVoucher} disabled={loading} className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300">
+                <Download className="w-4 h-4 mr-2" /> Voucher PDF
+              </Button>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cerrar</Button>
+                <Button type="submit" disabled={loading}>{loading ? 'Guardando...' : 'Guardar Pasajeros'}</Button>
+              </div>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      <div className="rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden shadow-sm">
+      <div className="rounded-xl border border-zinc-200/50 dark:border-zinc-800/50 bg-white/50 dark:bg-zinc-900/20 backdrop-blur-sm overflow-hidden shadow-lg shadow-zinc-200/20 dark:shadow-none">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="bg-zinc-50/50 dark:bg-zinc-900/50">
-                <TableHead>Huésped Principal</TableHead>
-                <TableHead>Habitación</TableHead>
-                <TableHead>Fechas (Check In/Out)</TableHead>
-                <TableHead>Origen</TableHead>
-                <TableHead>Monto Neto</TableHead>
-                <TableHead>Estado / Pago</TableHead>
+              <TableRow className="bg-zinc-50/80 dark:bg-zinc-900/40 hover:bg-zinc-50/80 dark:hover:bg-zinc-900/40 border-b-zinc-100 dark:border-b-zinc-800/50">
+                <TableHead className="font-medium text-zinc-500 dark:text-zinc-400 cursor-pointer select-none" onClick={() => handleSort('huesped')}>
+                  <div className="flex items-center gap-1">Huésped Principal <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
+                <TableHead className="font-medium text-zinc-500 dark:text-zinc-400 cursor-pointer select-none" onClick={() => handleSort('estadia')}>
+                  <div className="flex items-center gap-1">Estadía & Servicios <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
+                <TableHead className="font-medium text-zinc-500 dark:text-zinc-400 cursor-pointer select-none" onClick={() => handleSort('fechas')}>
+                  <div className="flex items-center gap-1">Fechas <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
+                <TableHead className="font-medium text-zinc-500 dark:text-zinc-400 cursor-pointer select-none" onClick={() => handleSort('origen')}>
+                  <div className="flex items-center gap-1">Origen <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
+                <TableHead className="font-medium text-zinc-500 dark:text-zinc-400 cursor-pointer select-none" onClick={() => handleSort('monto')}>
+                  <div className="flex items-center gap-1">Monto Neto <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
+                <TableHead className="font-medium text-zinc-500 dark:text-zinc-400 cursor-pointer select-none" onClick={() => handleSort('estado')}>
+                  <div className="flex items-center gap-1">Estado / Pago <ArrowUpDown className="h-3 w-3" /></div>
+                </TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredGroups.length === 0 ? (
+              {processedGroups.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-24 text-center text-zinc-500">
-                    {searchQuery ? 'No se encontraron reservas con esa búsqueda.' : 'No hay reservas registradas.'}
+                  <TableCell colSpan={7} className="h-32 text-center text-zinc-500">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <Search className="h-6 w-6 text-zinc-300" />
+                      <p>{searchQuery ? 'No se encontraron reservas con esa búsqueda.' : 'No hay reservas registradas.'}</p>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredGroups.map((group, idx) => {
+                processedGroups.map((group, idx) => {
                   const res = group[0] // Main reference
                   const habNames = group.map(r => {
                     const h = habitaciones.find(x => x.id === r.habitacion_id)
@@ -357,89 +465,104 @@ export default function ReservasListClientPage({ reservas, habitaciones }: { res
                   
                   const totalGrupo = group.reduce((sum, r) => sum + (Number(r.monto_total) || 0), 0).toFixed(2)
 
+                  // Extraer servicios adicionales
+                  const todosServicios = group.flatMap(r => r.servicios_adicionales || [])
+                  const uniqueServicios = Array.from(new Map(todosServicios.map(s => [s.id, s])).values())
+
                   return (
                     <TableRow 
                       key={res.localizador || res.id || idx} 
                       onClick={() => handleRowClick(group)}
-                      className="group hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition-colors cursor-pointer"
+                      className="group hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-all cursor-pointer border-b-zinc-100 dark:border-b-zinc-800/30"
                     >
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <div className="h-8 w-8 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-500">
+                      <TableCell className="font-medium py-4">
+                        <div className="flex items-start gap-3">
+                          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900 flex items-center justify-center text-zinc-500 shadow-inner">
                             <Users className="h-4 w-4" />
                           </div>
-                          <div>
-                            <div className="text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                          <div className="flex flex-col">
+                            <div className="text-zinc-900 dark:text-zinc-100 font-semibold flex items-center gap-2">
                               {huesped}
-                              {!tieneDoc && <div className="w-1.5 h-1.5 rounded-full bg-amber-500" title="Falta documento del titular" />}
+                              {!tieneDoc && <div className="w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]" title="Falta documento del titular" />}
                             </div>
-                            <div className="text-xs text-zinc-500 font-normal">
-                              {res.adultos} Ad / {res.ninos} Niños {countAcompanantes > 0 ? `(+${countAcompanantes} acomp.)` : ''}
+                            <div className="text-xs text-zinc-500 font-medium mt-0.5">
+                              {res.adultos} Ad / {res.ninos} Niños {countAcompanantes > 0 ? <span className="text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded-full ml-1">+{countAcompanantes} acomp.</span> : ''}
                             </div>
                             {res.numero_expediente && (
-                              <div className="text-[10px] text-teal-600 dark:text-teal-400 font-medium mt-0.5">
-                                File: {res.numero_expediente}
+                              <div className="text-[10px] text-teal-600 dark:text-teal-400 font-semibold mt-1 flex items-center gap-1">
+                                <FileText className="w-3 h-3" /> File: {res.numero_expediente}
                               </div>
                             )}
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-                          <Hotel className="h-4 w-4" />
-                          <div className="max-w-[120px] truncate" title={habNames}>
-                            {group.length > 1 ? (
-                              <Badge variant="secondary" className="font-normal text-xs">{group.length} Habs: {habNames}</Badge>
-                            ) : (
-                              `Hab. ${habNames}`
-                            )}
+                      <TableCell className="py-4">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300 font-medium">
+                            <Hotel className="h-4 w-4 text-zinc-400" />
+                            <div className="truncate">
+                              {group.length > 1 ? (
+                                <Badge variant="secondary" className="font-medium bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200">{group.length} Habs: {habNames}</Badge>
+                              ) : (
+                                `Hab. ${habNames}`
+                              )}
+                            </div>
                           </div>
+                          {uniqueServicios.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {uniqueServicios.map((s: any, idx: number) => (
+                                <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-800/50 rounded-md">
+                                  + {s.nombre}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+                      <TableCell className="py-4">
+                        <div className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300 font-medium bg-zinc-50 dark:bg-zinc-900/50 w-fit px-2.5 py-1.5 rounded-md border border-zinc-100 dark:border-zinc-800/50">
                           <CalendarDays className="h-4 w-4 text-zinc-400" />
                           <span>
-                            {format(parseISO(res.check_in), "d MMM", { locale: es })} - {format(parseISO(res.check_out), "d MMM", { locale: es })}
+                            {format(parseISO(res.check_in), "d MMM", { locale: es })} <span className="text-zinc-300 dark:text-zinc-600 mx-1">→</span> {format(parseISO(res.check_out), "d MMM", { locale: es })}
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="py-4">
                         {res.origen === 'directa' ? (
-                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-400 dark:border-emerald-900">
+                          <Badge variant="outline" className="bg-emerald-50/50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-900/50 font-medium">
                             Directa
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-400 dark:border-indigo-900">
+                          <Badge variant="outline" className="bg-indigo-50/50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-900/50 font-medium">
                             Agencia B2B
                           </Badge>
                         )}
                       </TableCell>
-                      <TableCell className="font-medium text-zinc-900 dark:text-zinc-100">
-                        {totalGrupo} {res.moneda}
+                      <TableCell className="font-bold text-zinc-900 dark:text-zinc-100 py-4">
+                        ${totalGrupo} <span className="text-xs font-medium text-zinc-500">{res.moneda}</span>
                       </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1 items-start">
-                          <Badge variant="secondary" className={`capitalize text-[10px] font-normal leading-none ${res.estado === 'cancelada' ? 'bg-red-50 text-red-700' : ''}`}>
+                      <TableCell className="py-4">
+                        <div className="flex flex-col gap-1.5 items-start">
+                          <Badge variant="secondary" className={`capitalize text-[10px] font-semibold leading-none ${res.estado === 'cancelada' ? 'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-400 border-transparent' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300'}`}>
                             {res.estado}
                           </Badge>
                           
                           {res.origen === 'erp_b2b' && (
                             res.pago_verificado ? (
-                              <span className="text-[10px] font-medium text-emerald-600 flex items-center gap-1 mt-1">
-                                <CheckCircle2 className="w-3 h-3" /> Verificado
+                              <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1 mt-0.5">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Verificado
                               </span>
                             ) : (
-                              <span className="text-[10px] font-medium text-amber-600 flex items-center gap-1 mt-1">
-                                Pendiente
+                              <span className="text-[10px] font-semibold text-amber-600 flex items-center gap-1 mt-0.5 bg-amber-50 dark:bg-amber-950/30 px-1.5 py-0.5 rounded">
+                                ⏳ Pendiente
                               </span>
                             )
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Pencil className="h-4 w-4 text-zinc-400" />
+                      <TableCell className="py-4 text-right">
+                        <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-all scale-95 group-hover:scale-100 hover:bg-zinc-100 dark:hover:bg-zinc-800">
+                          <Pencil className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -448,6 +571,86 @@ export default function ReservasListClientPage({ reservas, habitaciones }: { res
               )}
             </TableBody>
           </Table>
+        </div>
+      </div>
+
+      {/* HIDDEN VOUCHER TEMPLATE */}
+      <div style={{ display: 'none' }}>
+        <div id="voucher-template" className="p-8 font-sans w-[800px]" style={{ backgroundColor: '#ffffff', color: '#000000' }}>
+          <div className="flex justify-between items-start border-b-2 pb-6 mb-6" style={{ borderColor: '#4f46e5' }}>
+            <div>
+              <h1 className="text-4xl font-black tracking-tighter" style={{ color: '#4f46e5' }}>Voucher de Reserva</h1>
+              <p className="mt-1" style={{ color: '#71717a' }}>Confirmación Oficial</p>
+            </div>
+            <div className="text-right">
+              <p className="font-bold text-xl">Loc: {selectedGroup?.[0]?.localizador}</p>
+              <p className="mt-1" style={{ color: '#52525b' }}>Fecha de Emisión: {format(new Date(), 'dd/MM/yyyy')}</p>
+            </div>
+          </div>
+
+          <div className="mb-8 grid grid-cols-2 gap-8">
+            <div>
+              <h3 className="text-lg font-bold p-2 rounded mb-4" style={{ backgroundColor: '#eef2ff', color: '#3730a3' }}>Datos del Titular</h3>
+              <p><span className="font-semibold" style={{ color: '#52525b' }}>Nombre:</span> {titular.nombre}</p>
+              <p><span className="font-semibold" style={{ color: '#52525b' }}>Documento:</span> {titular.documento}</p>
+              <p><span className="font-semibold" style={{ color: '#52525b' }}>Teléfono:</span> {titular.telefono}</p>
+              <p><span className="font-semibold" style={{ color: '#52525b' }}>Email:</span> {titular.email}</p>
+            </div>
+            <div>
+              <h3 className="text-lg font-bold p-2 rounded mb-4" style={{ backgroundColor: '#eef2ff', color: '#3730a3' }}>Detalles de Estadía</h3>
+              <p><span className="font-semibold" style={{ color: '#52525b' }}>Check-in:</span> {selectedGroup?.[0] ? format(parseISO(selectedGroup[0].check_in), "dd/MM/yyyy") : ''}</p>
+              <p><span className="font-semibold" style={{ color: '#52525b' }}>Check-out:</span> {selectedGroup?.[0] ? format(parseISO(selectedGroup[0].check_out), "dd/MM/yyyy") : ''}</p>
+              <p><span className="font-semibold" style={{ color: '#52525b' }}>Total Pasajeros:</span> {selectedGroup?.reduce((sum, r) => sum + r.adultos + r.ninos, 0)}</p>
+            </div>
+          </div>
+
+          <h3 className="text-lg font-bold p-2 rounded mb-4" style={{ backgroundColor: '#eef2ff', color: '#3730a3' }}>Detalle de Habitaciones</h3>
+          <table className="w-full mb-8 border-collapse">
+            <thead>
+              <tr style={{ backgroundColor: '#f4f4f5' }}>
+                <th className="p-3 text-left border-b font-bold" style={{ borderColor: '#e4e4e7' }}>Habitación</th>
+                <th className="p-3 text-left border-b font-bold" style={{ borderColor: '#e4e4e7' }}>Ocupantes</th>
+                <th className="p-3 text-right border-b font-bold" style={{ borderColor: '#e4e4e7' }}>Monto</th>
+              </tr>
+            </thead>
+            <tbody>
+              {selectedGroup?.map((r, i) => {
+                const hab = habitaciones.find(h => h.id === r.habitacion_id)
+                return (
+                  <tr key={i}>
+                    <td className="p-3 border-b" style={{ borderColor: '#e4e4e7', color: '#27272a' }}>Hab. {hab ? hab.numero_habitacion : 'N/A'}</td>
+                    <td className="p-3 border-b" style={{ borderColor: '#e4e4e7', color: '#27272a' }}>{r.adultos} Ad, {r.ninos} Ni</td>
+                    <td className="p-3 border-b text-right font-medium" style={{ borderColor: '#e4e4e7' }}>${r.monto_total}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+
+          {selectedGroup?.[0]?.servicios_adicionales && selectedGroup[0].servicios_adicionales.length > 0 && (
+            <>
+              <h3 className="text-lg font-bold p-2 rounded mb-4" style={{ backgroundColor: '#eef2ff', color: '#3730a3' }}>Servicios Adicionales</h3>
+              <table className="w-full mb-8 border-collapse">
+                <tbody>
+                  {selectedGroup[0].servicios_adicionales.map((s: any) => (
+                    <tr key={s.id}>
+                      <td className="p-3 border-b" style={{ borderColor: '#e4e4e7', color: '#27272a' }}>{s.nombre}</td>
+                      <td className="p-3 border-b text-right font-medium" style={{ borderColor: '#e4e4e7' }}>${s.precio}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          <div className="flex justify-end mt-8">
+            <div className="w-64">
+              <div className="flex justify-between py-2 border-t-2 font-bold text-xl" style={{ borderColor: '#000000' }}>
+                <span>TOTAL Abonado:</span>
+                <span>${selectedGroup?.reduce((sum, r) => sum + (Number(r.monto_total) || 0), 0).toFixed(2)} USD</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

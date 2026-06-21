@@ -40,9 +40,11 @@ function NavLinks({ onClick }: { onClick?: () => void }) {
   )
 }
 
+import { ThemeToggle } from '@/components/theme-toggle'
+
 function UserProfile() {
   return (
-    <div className="rounded-xl bg-zinc-50 p-4 border border-zinc-100 dark:bg-zinc-800/50 dark:border-zinc-800">
+    <div className="flex items-center justify-between rounded-xl bg-zinc-50 p-3 border border-zinc-100 dark:bg-zinc-800/50 dark:border-zinc-800">
       <div className="flex items-center gap-3">
         <div className="h-9 w-9 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 font-bold dark:bg-teal-900/50 dark:text-teal-400">
           M
@@ -52,6 +54,7 @@ function UserProfile() {
           <p className="text-xs text-zinc-500 dark:text-zinc-400">Agencia Mayorista</p>
         </div>
       </div>
+      <ThemeToggle />
     </div>
   )
 }

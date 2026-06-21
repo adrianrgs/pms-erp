@@ -17,6 +17,13 @@ export async function savePosadaConfig(formData: FormData) {
   const desayuno = formData.get('desayuno') === 'on'
   const piscina = formData.get('piscina') === 'on'
   const parking = formData.get('parking') === 'on'
+  const edad_max_infantes = parseInt(formData.get('edad_max_infantes') as string) || 3
+  const edad_max_ninos = parseInt(formData.get('edad_max_ninos') as string) || 12
+  // Campos del Motor de Reservas Público
+  const slug = (formData.get('slug') as string)?.trim().toLowerCase() || null
+  const tiene_landing_propia = formData.get('tiene_landing_propia') === 'on'
+  const color_primario = (formData.get('color_primario') as string) || '#2563eb'
+  const color_secundario = (formData.get('color_secundario') as string) || '#7c3aed'
 
   const amenidades = { wifi, desayuno, piscina, parking }
 
@@ -48,6 +55,12 @@ export async function savePosadaConfig(formData: FormData) {
         politicas,
         amenidades,
         moneda_base,
+        edad_max_infantes,
+        edad_max_ninos,
+        slug,
+        tiene_landing_propia,
+        color_primario,
+        color_secundario,
         updated_at: new Date().toISOString()
       })
       .eq('id', posadaId)
@@ -62,7 +75,13 @@ export async function savePosadaConfig(formData: FormData) {
         descripcion,
         politicas,
         amenidades,
-        moneda_base
+        moneda_base,
+        edad_max_infantes,
+        edad_max_ninos,
+        slug,
+        tiene_landing_propia,
+        color_primario,
+        color_secundario,
       })
       .select('id')
       .single()

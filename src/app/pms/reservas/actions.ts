@@ -22,16 +22,13 @@ export async function calcularTarifa(habitacion_id: string, check_in: string, ch
     
   if (!hab) return 0
 
-  const capacidad_base = (hab.categorias_habitacion as any).capacidad_base_pax || 2
-  const adultos_extra = Math.max(0, total_adultos - capacidad_base)
-
   // Call RPC
-  const { data: precio, error } = await supabase.rpc('calcular_precio_estadia', {
+  const { data, error } = await supabase.rpc('calcular_precio_estadia', {
     p_posada_id: hab.posada_id,
     p_categoria_id: hab.categoria_id,
     p_check_in: check_in,
     p_check_out: check_out,
-    p_adultos_extra: adultos_extra,
+    p_adultos: total_adultos,
     p_ninos: total_ninos
   })
 
@@ -40,7 +37,11 @@ export async function calcularTarifa(habitacion_id: string, check_in: string, ch
     return { error: error.message }
   }
 
-  return { precio }
+  // data is now a JSONB object { total: number, desglose: { base, adultos_extra, ninos } }
+  return { 
+    precio: data?.total || 0,
+    desglose: data?.desglose || { base: 0, adultos_extra: 0, ninos: 0 }
+  }
 }
 
 export async function addReserva(formData: FormData) {
@@ -64,7 +65,7 @@ export async function addReserva(formData: FormData) {
   const moneda = 'USD'
   
   const detalles_por_habitacion_raw = formData.get('detalles_por_habitacion') as string
-  let detalles_por_habitacion: Record<string, { nombre: string, adultos: string, ninos: string }> = {}
+  let detalles_por_habitacion: Record<string, { nombre: string, documento?: string, adultos: string, ninos: string, acompanantes?: { id: string, nombre: string, documento: string }[] }> = {}
   try {
     if (detalles_por_habitacion_raw) detalles_por_habitacion = JSON.parse(detalles_por_habitacion_raw)
   } catch (e) {}
@@ -131,6 +132,12 @@ export async function addReserva(formData: FormData) {
         tipo: 'adulto' // default
       }))
     
+    const servicios_adicionales_raw = formData.get('servicios_adicionales') as string
+    let servicios_adicionales = []
+    try {
+      if (servicios_adicionales_raw) servicios_adicionales = JSON.parse(servicios_adicionales_raw)
+    } catch(e) {}
+
     const monto_por_hab = tarifas_por_habitacion[hab_id] !== undefined ? tarifas_por_habitacion[hab_id] : fallback_monto_por_hab
 
     insertPayloads.push({
@@ -146,6 +153,7 @@ export async function addReserva(formData: FormData) {
       monto_total: monto_por_hab,
       origen: 'directa',
       estado: 'confirmada',
+      servicios_adicionales,
       cliente_info: {
         titular: {
           nombre: customName,
@@ -206,13 +214,20 @@ export async function editReserva(id: string, formData: FormData) {
 
   if (overlap && overlap.length > 0) throw new Error('La habitación está ocupada en esas fechas.')
 
+  const servicios_adicionales_raw = formData.get('servicios_adicionales') as string
+  let servicios_adicionales = []
+  try {
+    if (servicios_adicionales_raw) servicios_adicionales = JSON.parse(servicios_adicionales_raw)
+  } catch(e) {}
+
   const { error } = await supabase.from('reservas').update({
     habitacion_id,
     check_in,
     check_out,
     monto_total,
     adultos,
-    ninos
+    ninos,
+    servicios_adicionales
   }).eq('id', id)
 
   if (error) throw new Error(error.message)
